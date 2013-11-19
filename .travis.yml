@@ -1,18 +1,11 @@
 language:
-    - cpp
+    - objective-c
 
 before_install:
-    # install cmake 2.8.10 manually
-    - wget http://www.cmake.org/files/v2.8/cmake-2.8.10.tar.gz
-    - tar xf *.tar.gz
-    - cd cmake-*
+    - brew update
 
 install:
-    - sudo apt-get install libcurl3-dev
-    - ./bootstrap --system-curl
-    - make
-    - sudo make install
-    - cd ..
+    - brew install cmake
 
 script:
     - mkdir _builds
