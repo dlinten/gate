@@ -15,7 +15,6 @@ project(gate-usage-example)
 include("HunterGate.cmake")
 
 # now hunter can be used, like
-include(hunter_add_package)
 hunter_add_package(Sugar)
 
 # add downloaded package to project
