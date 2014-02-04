@@ -14,8 +14,8 @@
 
 cmake_minimum_required(VERSION 2.8.10)
 
-set(HUNTER_MINIMUM_VERSION "0.2.0")
-set(HUNTER_MINIMUM_VERSION_HASH 60dc4e2e87cf6d110ff872a74a4d71ae31f82a92)
+set(HUNTER_MINIMUM_VERSION "0.2.6")
+set(HUNTER_MINIMUM_VERSION_HASH f335f68871f68ea4673c3135368ca94090d4ef85)
 
 # Set HUNTER_ROOT cmake variable to suitable value.
 # Info about variable can be found in HUNTER_ROOT_INFO.
@@ -92,10 +92,13 @@ function(hunter_gate_do_download)
     )
   endif()
 
+  set(TEMP_DIR "${PROJECT_BINARY_DIR}/Hunter-activity/gate")
+  set(TEMP_BUILD "${TEMP_DIR}/_builds")
+
   set(URL_BASE "https://github.com/ruslo/hunter/archive")
   file(
       WRITE
-      "${PROJECT_BINARY_DIR}/Hunter-prefix/CMakeLists.txt"
+      "${TEMP_DIR}/CMakeLists.txt"
       "cmake_minimum_required(VERSION 2.8.10)\n"
       "include(ExternalProject)\n"
       "ExternalProject_Add(\n"
@@ -119,9 +122,9 @@ function(hunter_gate_do_download)
 
   execute_process(
       COMMAND
-      "${CMAKE_COMMAND}" .
+      "${CMAKE_COMMAND}" "-H${TEMP_DIR}" "-B${TEMP_BUILD}"
       WORKING_DIRECTORY
-      "${PROJECT_BINARY_DIR}/Hunter-prefix"
+      "${TEMP_DIR}"
       RESULT_VARIABLE
       HUNTER_DOWNLOAD_RESULT
   )
@@ -132,9 +135,9 @@ function(hunter_gate_do_download)
 
   execute_process(
       COMMAND
-      "${CMAKE_COMMAND}" --build .
+      "${CMAKE_COMMAND}" --build "${TEMP_BUILD}"
       WORKING_DIRECTORY
-      "${PROJECT_BINARY_DIR}/Hunter-prefix"
+      "${TEMP_DIR}"
       RESULT_VARIABLE
       HUNTER_DOWNLOAD_RESULT
   )
