@@ -1,12 +1,6 @@
 language:
     - objective-c
 
-before_install:
-    - brew update
-
-install:
-    - brew install cmake
-
 script:
     - mkdir _builds
     - cd _builds
