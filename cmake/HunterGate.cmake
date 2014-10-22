@@ -1,10 +1,35 @@
 # Copyright (c) 2013-2014, Ruslan Baratov
 # All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# * Redistributions of source code must retain the above copyright notice, this
+#   list of conditions and the following disclaimer.
+#
+# * Redistributions in binary form must reproduce the above copyright notice,
+#   this list of conditions and the following disclaimer in the documentation
+#   and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 # This is a gate file to Hunter package manager.
 # Usage: include this file using `include` command and add package you need:
 #
 #     include("cmake/HunterGate.cmake")
+#     HunterGate(
+#         URL "https://github.com/path/to/hunter/archive.tar.gz"
+#         SHA1 "798501e983f14b28b10cda16afa4de69eee1da1d"
+#     )
 #     hunter_add_package(Foo)
 #     hunter_add_package(Boo COMPONENTS Bar Baz)
 #
@@ -12,21 +37,10 @@
 #     * https://github.com/hunter-packages/gate/
 #     * https://github.com/ruslo/hunter
 
-cmake_minimum_required(VERSION 2.8.10)
+cmake_minimum_required(VERSION 3.0)
 include(CMakeParseArguments)
 
-macro(hunter_minimum_required)
-  cmake_parse_arguments(HUNTER_MINIMUM "" "VERSION;URL;SHA1" "" ${ARGV})
-endmacro()
-
-# 01.
-# Customizable --
-hunter_minimum_required(
-    VERSION "0.4.2"
-    URL "https://github.com/ruslo/hunter/archive/v0.4.2.tar.gz"
-    SHA1 "3a6c66670dc4103ff2567c03d44b2a99e288e3c8"
-)
-# -- end
+option(HUNTER_ENABLED "Enable Hunter package manager support" ON)
 
 # Set HUNTER_ROOT cmake variable to suitable value.
 # Info about variable can be found in HUNTER_ROOT_INFO.
@@ -88,12 +102,92 @@ function(hunter_gate_detect_root)
   )
 endfunction()
 
-# Download project to HUNTER_ROOT
-function(hunter_gate_do_download)
-  message(
-      STATUS
-      "[hunter] Hunter not found, start download to '${HUNTER_ROOT}' ..."
+# If several processes simultaneously try to init base hunter directory
+# this synchronisation helps to do it correctly
+function(hunter_gate_try_lock result)
+  if(NOT HUNTER_LOCK_PATH)
+    message(FATAL_ERROR "Internal error (HUNTER_LOCK_PATH is empty)")
+  endif()
+
+  if(NOT HUNTER_LOCK_INFO)
+    message(FATAL_ERROR "Internal error (HUNTER_LOCK_INFO is empty)")
+  endif()
+
+  if(NOT HUNTER_LOCK_FULL_INFO)
+    message(FATAL_ERROR "Internal error (HUNTER_LOCK_FULL_INFO is empty)")
+  endif()
+
+  if(NOT PROJECT_BINARY_DIR)
+    message(FATAL_ERROR "Internal error (PROJECT_BINARY_DIR is empty)")
+  endif()
+
+  file(TO_NATIVE_PATH "${HUNTER_LOCK_PATH}" lock_path)
+
+  # `cmake -E make_directory` is not fit here because this command succeed
+  # even if directory already exists
+  if(WIN32)
+    if(MINGW)
+      # He-he :)
+      string(REPLACE "/" "\\" lock_path "${lock_path}")
+    endif()
+    execute_process(
+        COMMAND cmd /C mkdir "${lock_path}"
+        RESULT_VARIABLE lock_result
+        OUTPUT_VARIABLE lock_result_info
+        ERROR_VARIABLE lock_result_info
+    )
+  else()
+    execute_process(
+        COMMAND mkdir "${lock_path}"
+        RESULT_VARIABLE lock_result
+        OUTPUT_VARIABLE lock_result_info
+        ERROR_VARIABLE lock_result_info
+    )
+  endif()
+
+  if(NOT lock_result EQUAL 0)
+    message("Lock failed with result: ${lock_result}")
+    message("Reason:  ${lock_result_info}")
+    set(${result} FALSE PARENT_SCOPE)
+    return()
+  endif()
+
+  file(WRITE "${HUNTER_LOCK_INFO}" "${PROJECT_BINARY_DIR}")
+
+  string(TIMESTAMP time_now)
+  file(
+      WRITE
+      "${HUNTER_LOCK_FULL_INFO}"
+      "    Project binary directory: ${PROJECT_BINARY_DIR}\n"
+      "    Build start at: ${time_now}"
   )
+
+  set(${result} TRUE PARENT_SCOPE)
+endfunction()
+
+# Remove lock directory that created by `hunter_gate_try_lock`
+function(hunter_gate_unlock)
+  file(REMOVE_RECURSE "${HUNTER_LOCK_PATH}")
+
+  # If failed pretend that we done.
+  # Other projects will crash when check the
+  # existance of `${HUNTER_SELF}/cmake/Hunter`
+  file(WRITE "${HUNTER_GATE_INSTALL_DONE}" "done")
+endfunction()
+
+# Download project to HUNTER_BASE
+function(hunter_gate_do_download)
+  if(NOT HUNTER_BASE)
+    message(FATAL_ERROR "Internal error (HUNTER_BASE is empty)")
+  endif()
+
+  if(NOT HUNTER_GATE_INSTALL_DONE)
+    message(FATAL_ERROR "Internal error (HUNTER_GATE_INSTALL_DONE is empty)")
+  endif()
+
+  if(NOT HUNTER_LOCK_PATH)
+    message(FATAL_ERROR "Internal error (HUNTER_LOCK_PATH is empty)")
+  endif()
 
   if(NOT PROJECT_BINARY_DIR)
     message(
@@ -103,24 +197,39 @@ function(hunter_gate_do_download)
     )
   endif()
 
+  hunter_gate_try_lock(lock_successful)
+  if(NOT lock_successful)
+    # Return and wait until HUNTER_GATE_INSTALL_DONE created
+    return()
+  endif()
+
   set(TEMP_DIR "${PROJECT_BINARY_DIR}/_3rdParty/gate")
   set(TEMP_BUILD "${TEMP_DIR}/_builds")
 
+  message(
+      STATUS
+      "[hunter] Hunter not found, start download to '${HUNTER_BASE}' ..."
+      "(${TEMP_BUILD})"
+  )
+
+  # Disabling languages speeds up a little bit, reduces noise in the output
+  # and avoids path too long windows error
   file(
       WRITE
       "${TEMP_DIR}/CMakeLists.txt"
       "cmake_minimum_required(VERSION 2.8.10)\n"
+      "project(HunterDownload LANGUAGES NONE)\n"
       "include(ExternalProject)\n"
       "ExternalProject_Add(\n"
       "    Hunter\n"
       "    URL\n"
-      "    \"${HUNTER_MINIMUM_URL}\"\n"
+      "    \"${HUNTER_URL}\"\n"
       "    URL_HASH\n"
-      "    SHA1=${HUNTER_MINIMUM_SHA1}\n"
+      "    SHA1=${HUNTER_SHA1}\n"
       "    DOWNLOAD_DIR\n"
-      "    \"${HUNTER_ROOT}/Download\"\n"
+      "    \"${HUNTER_BASE}/Download\"\n"
       "    SOURCE_DIR\n"
-      "    \"${HUNTER_ROOT}/Source\"\n"
+      "    \"${HUNTER_BASE}/Self\"\n"
       "    CONFIGURE_COMMAND\n"
       "    \"\"\n"
       "    BUILD_COMMAND\n"
@@ -132,14 +241,15 @@ function(hunter_gate_do_download)
 
   execute_process(
       COMMAND
-      "${CMAKE_COMMAND}" "-H${TEMP_DIR}" "-B${TEMP_BUILD}"
-      WORKING_DIRECTORY
-      "${TEMP_DIR}"
-      RESULT_VARIABLE
-      HUNTER_DOWNLOAD_RESULT
+          "${CMAKE_COMMAND}"
+          "-H${TEMP_DIR}"
+          "-B${TEMP_BUILD}"
+      WORKING_DIRECTORY "${TEMP_DIR}"
+      RESULT_VARIABLE HUNTER_DOWNLOAD_RESULT
   )
 
   if(NOT HUNTER_DOWNLOAD_RESULT EQUAL 0)
+    hunter_gate_unlock()
     message(FATAL_ERROR "Configure download project failed")
   endif()
 
@@ -153,239 +263,132 @@ function(hunter_gate_do_download)
   )
 
   if(NOT HUNTER_DOWNLOAD_RESULT EQUAL 0)
+    hunter_gate_unlock()
     message(FATAL_ERROR "Build download project failed")
   endif()
 
-  execute_process(
-      COMMAND
-      "${CMAKE_COMMAND}"
-      -E
-      touch
-      "${HUNTER_ROOT}/installed.by.gate"
-  )
+  hunter_gate_unlock()
 
-  message(STATUS "[hunter] downloaded to '${HUNTER_ROOT}'")
+  message(STATUS "[hunter] downloaded to '${HUNTER_BASE}'")
 endfunction()
 
-# Get HUNTER_VERSION from ${HUNTER_ROOT}/Source/cmake/version.cmake
-# Preconditions: ${HUNTER_ROOT} is defined and is a directory
-function(hunter_gate_detect_version)
-  if(NOT HUNTER_ROOT)
-    message(FATAL_ERROR "Internal error")
-  endif()
-
-  if(NOT EXISTS "${HUNTER_ROOT}")
-    message(FATAL_ERROR "Internal error")
-  endif()
-
-  if(NOT IS_DIRECTORY "${HUNTER_ROOT}")
-    message(FATAL_ERROR "Internal error")
-  endif()
-
-  # check master (valid directory?)
-  if(NOT EXISTS "${HUNTER_ROOT}/Source/cmake/Hunter")
-    message(
-        FATAL_ERROR
-        "HUNTER_ROOT directory exists (${HUNTER_ROOT})"
-        "but '${HUNTER_ROOT}/Source/cmake/Hunter' file not found"
-        "(${HUNTER_ROOT_INFO})"
-    )
-  endif()
-
-  # check version
-  if(NOT EXISTS "${HUNTER_ROOT}/Source/cmake/version.cmake")
-    message(
-        FATAL_ERROR
-        "HUNTER_ROOT directory exists (${HUNTER_ROOT})"
-        "but '${HUNTER_ROOT}/Source/cmake/version.cmake' file not found"
-        "(${HUNTER_ROOT_INFO})"
-    )
-  endif()
-
-  unset(HUNTER_VERSION)
-  if(HUNTER_VERSION)
-    message(FATAL_ERROR "Internal error (HUNTER_VERSION in cache)")
-  endif()
-
-  include("${HUNTER_ROOT}/Source/cmake/version.cmake")
-  if(NOT HUNTER_VERSION)
-    message(
-        FATAL_ERROR
-        "Internal error: HUNTER_VERSION is not set in `version.cmake`"
-        " (${HUNTER_ROOT_INFO})"
-    )
-  endif()
-
-  set(HUNTER_VERSION ${HUNTER_VERSION} PARENT_SCOPE)
-endfunction()
-
-# Try to remove directories for autoupdate:
-# * ${HUNTER_ROOT}/Base
-# * ${HUNTER_ROOT}/Source
-function(hunter_gate_remove_old_version)
-  if(NOT HUNTER_ROOT)
-    message(FATAL_ERROR "Internal error")
-  endif()
-
-  if(NOT EXISTS "${HUNTER_ROOT}/installed.by.gate")
-    message(
-        FATAL_ERROR
-        "Please update version manually or remove directory `${HUNTER_ROOT}`."
-        " Version read from file `${HUNTER_ROOT}/Source/cmake/version.cmake`."
-        " (${HUNTER_ROOT_INFO})"
-    )
-  endif()
-
-  if(EXISTS "${HUNTER_ROOT}/Source/.git")
-    message(
-        FATAL_ERROR
-        "Internal error: `installed.by.gate` and `.git`"
-        " (${HUNTER_ROOT_INFO})"
-    )
-  endif()
-  # File `${HUNTER_ROOT}/installed.by.gate` exists, hence current version
-  # installed by older gate file and can be auto-updated by current gate
-  if(NOT EXISTS "${HUNTER_ROOT}/Source/scripts/sleep.cmake")
-    message(FATAL_ERROR "Internal error: sleep.cmake not found")
-  endif()
-
-  set(_hunter_timeout 10)
-  message("")
-  message("***** AUTO UPDATE *****")
-  message("")
-  message("Directories:")
-  message("    * `${HUNTER_ROOT}/Base`")
-  message("    * `${HUNTER_ROOT}/Source`")
-  message("will be REMOVED")
-  message("")
-
-  foreach(x RANGE ${_hunter_timeout})
-    math(EXPR _hunter_output "(${_hunter_timeout}) - (${x})")
-    execute_process(
-        COMMAND
-        "${CMAKE_COMMAND}"
-        -E
-        echo_append
-        "${_hunter_output} "
-    )
-    if(NOT _hunter_output EQUAL 0)
-      execute_process(
-          COMMAND
-          "${CMAKE_CTEST_COMMAND}"
-          -S
-          "${HUNTER_ROOT}/Source/scripts/sleep.cmake"
+function(hunter_gate_init)
+  if(NOT EXISTS "${HUNTER_BASE}")
+    file(MAKE_DIRECTORY "${HUNTER_BASE}")
+    if(NOT EXISTS "${HUNTER_BASE}")
+      message(
+          FATAL_ERROR
+          "Can't create directory `${HUNTER_BASE}`"
+          "(probably no permissions)"
       )
     endif()
-  endforeach()
-
-  # One more sanity check...
-  string(COMPARE EQUAL "${HUNTER_ROOT}" "" _hunter_root_is_empty)
-  if(_hunter_root_is_empty)
-    message(FATAL_ERROR "Internal error: HUNTER_ROOT is empty")
+    hunter_gate_do_download()
   endif()
 
-  # Remove old version
-  if(EXISTS "${HUNTER_ROOT}/Base")
-    execute_process(
-        COMMAND
-        "${CMAKE_COMMAND}"
-        -E
-        remove_directory
-        "${HUNTER_ROOT}/Base"
+  while(NOT EXISTS "${HUNTER_GATE_INSTALL_DONE}")
+    # Directory already created, but installation is not finished yet
+    if(EXISTS "${HUNTER_LOCK_FULL_INFO}")
+      file(READ "${HUNTER_LOCK_FULL_INFO}" _fullinfo)
+    else()
+      set(_fullinfo "????")
+    endif()
+    string(TIMESTAMP _time_now)
+    message(
+        "[${_time_now}] Install already triggered, waiting for:\n${_fullinfo}\n"
+        "If that build cancelled (interrupted by user or some other reason), "
+        "please remove this directory manually:\n\n"
+        "    ${HUNTER_LOCK_PATH}\n\n"
+        "then run CMake again."
     )
-  endif()
-  if(EXISTS "${HUNTER_ROOT}/Source")
-    execute_process(
-        COMMAND
-        "${CMAKE_COMMAND}"
-        -E
-        remove_directory
-        "${HUNTER_ROOT}/Source"
+    # Some sanity checks
+    if(EXISTS "${HUNTER_LOCK_INFO}")
+      file(READ "${HUNTER_LOCK_INFO}" _info)
+      string(COMPARE EQUAL "${_info}" "${PROJECT_BINARY_DIR}" incorrect)
+      if(incorrect)
+        message(FATAL_ERROR "Waiting for self")
+      endif()
+      if(NOT EXISTS "${_info}")
+        # Do not crash here, this may happens (checking/reading is not atomic)
+        message("Waiting for deleted directory!")
+      endif()
+    endif()
+    execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep 1)
+  endwhile()
+
+  if(NOT EXISTS "${HUNTER_SELF}/cmake/Hunter")
+    message(
+        FATAL_ERROR
+        "Internal error can't find master file in directory `${HUNTER_BASE}`"
     )
   endif()
 endfunction()
 
-# 02.
-hunter_gate_detect_root() # set HUNTER_ROOT and HUNTER_ROOT_INFO
-
-# 03.
-if(NOT HUNTER_ROOT)
-  message(
-      FATAL_ERROR
-      "Internal error in 'hunter_gate_detect_root': HUNTER_ROOT is not set"
-  )
-endif()
-
-# Beautify path, fix probable problems with windows path slashes
-get_filename_component(HUNTER_ROOT "${HUNTER_ROOT}" ABSOLUTE)
-
-if(NOT EXISTS "${HUNTER_ROOT}")
-  # 04.
-  hunter_gate_do_download()
-  if(NOT EXISTS "${HUNTER_ROOT}")
-    message(
-        FATAL_ERROR
-        "Internal error in 'hunter_gate_do_download': "
-        "directory HUNTER_ROOT not found"
-    )
+macro(HunterGate)
+  # HUNTER_SHA1 may already be defined by other project
+  if(NOT HUNTER_SHA1)
+    cmake_parse_arguments(HUNTER "" "URL;SHA1" "" ${ARGV})
+    if(NOT HUNTER_SHA1)
+      message(FATAL_ERROR "SHA1 suboption of HunterGate is mandatory")
+    endif()
+    if(NOT HUNTER_URL)
+      message(FATAL_ERROR "URL suboption of HunterGate is mandatory")
+    endif()
+    if(HUNTER_UNPARSED_ARGUMENTS)
+      message(FATAL_ERROR "HunterGate unparsed arguments")
+    endif()
   endif()
-endif()
 
-# 05.
+  hunter_gate_detect_root() # set HUNTER_ROOT and HUNTER_ROOT_INFO
 
-# at this point: HUNTER_ROOT exists (is file or directory)
-if(NOT IS_DIRECTORY "${HUNTER_ROOT}")
-  message(
-      FATAL_ERROR
-      "HUNTER_ROOT is not directory (${HUNTER_ROOT})"
-      "(${HUNTER_ROOT_INFO})"
-  )
-endif()
-
-# at this point: HUNTER_ROOT exists and is directory
-file(GLOB _hunter_result "${HUNTER_ROOT}/*")
-list(LENGTH _hunter_result _hunter_result_len)
-if(_hunter_result_len EQUAL 0)
-  # 06.
-  # HUNTER_ROOT directory is empty, let's download it
-  hunter_gate_do_download()
-endif()
-
-unset(_hunter_result)
-unset(_hunter_result_len)
-
-# 07.
-hunter_gate_detect_version()
-
-if(HUNTER_VERSION VERSION_LESS HUNTER_MINIMUM_VERSION)
-  message(
-      "Current version is ${HUNTER_VERSION}. "
-      "Minimum version is ${HUNTER_MINIMUM_VERSION}. "
-      "Try autoupdate..."
-  )
-
-  # 08.
-  hunter_gate_remove_old_version()
-
-  # 09.
-  hunter_gate_do_download()
-
-  # 10.
-  hunter_gate_detect_version()
-
-  if(HUNTER_VERSION VERSION_LESS HUNTER_MINIMUM_VERSION)
-    message(FATAL_ERROR "Broken download: version is less than minimum")
+  if(NOT HUNTER_ROOT)
+    message(FATAL_ERROR "Internal error: HUNTER_ROOT is not set")
   endif()
-endif()
 
-# 11.
-# HUNTER_ROOT found or downloaded if not exists, i.e. can be used now
-include("${HUNTER_ROOT}/Source/cmake/Hunter")
+  # Beautify path, fix probable problems with windows path slashes
+  get_filename_component(HUNTER_ROOT "${HUNTER_ROOT}" ABSOLUTE)
 
-include(hunter_status_debug)
-hunter_status_debug(
-    "${HUNTER_ROOT_INFO}"
-    "(ver.: ${HUNTER_VERSION} minimum: ${HUNTER_MINIMUM_VERSION})"
-)
+  if(EXISTS "${HUNTER_ROOT}/cmake/Hunter")
+    # hunter installed manually
+    set(HUNTER_SHA1 "")
+    set(HUNTER_URL "")
+    set(HUNTER_BASE "${HUNTER_ROOT}/_Base")
+    set(HUNTER_SELF "${HUNTER_ROOT}")
+    set(HUNTER_GATE_INSTALL_DONE "${HUNTER_BASE}")
+    file(MAKE_DIRECTORY "${HUNTER_BASE}")
+  else()
+    set(HUNTER_BASE "${HUNTER_ROOT}/_Base/${HUNTER_SHA1}")
+    set(HUNTER_SELF "${HUNTER_BASE}/Self")
+    set(HUNTER_GATE_INSTALL_DONE "${HUNTER_BASE}/install-gate-done")
+  endif()
 
-include(hunter_add_package)
+  set(HUNTER_URL "${HUNTER_URL}" CACHE STRING "Hunter archive URL")
+  set(HUNTER_SHA1 "${HUNTER_SHA1}" CACHE STRING "Hunter archive SHA1 hash")
+
+  # Beautify path, fix probable problems with windows path slashes
+  get_filename_component(HUNTER_BASE "${HUNTER_BASE}" ABSOLUTE)
+  get_filename_component(HUNTER_SELF "${HUNTER_SELF}" ABSOLUTE)
+
+  set(HUNTER_ROOT "${HUNTER_ROOT}" CACHE PATH "Hunter root directory")
+  set(HUNTER_BASE "${HUNTER_BASE}" CACHE PATH "Hunter base directory")
+  set(HUNTER_SELF "${HUNTER_SELF}" CACHE PATH "Hunter self directory")
+
+  set(HUNTER_LOCK_PATH "${HUNTER_BASE}/directory-lock")
+  set(HUNTER_LOCK_INFO "${HUNTER_LOCK_PATH}/info")
+  set(HUNTER_LOCK_FULL_INFO "${HUNTER_LOCK_PATH}/fullinfo")
+
+  if(HUNTER_ENABLED)
+    hunter_gate_init()
+
+    # HUNTER_BASE found or downloaded if not exists, i.e. can be used now
+    include("${HUNTER_SELF}/cmake/Hunter")
+
+    include(hunter_status_debug)
+    hunter_status_debug("${HUNTER_ROOT_INFO}")
+
+    include(hunter_add_package)
+  else()
+    # Empty function to avoid error "unknown function"
+    function(hunter_add_package)
+    endfunction()
+  endif()
+endmacro()

@@ -1,13 +1,52 @@
+# Mac OS X (https://github.com/travis-ci-tester/toolchain-table)
+
 language:
     - objective-c
 
+env:
+    - TOOLCHAIN=default CONFIG=Debug TEST="--test"
+    - TOOLCHAIN=default CONFIG=Release TEST="--test"
+    - TOOLCHAIN=libcxx CONFIG=Debug TEST="--test"
+    - TOOLCHAIN=libcxx CONFIG=Release TEST="--test"
+    - TOOLCHAIN=clang-libstdcxx CONFIG=Debug TEST="--test"
+    - TOOLCHAIN=clang-libstdcxx CONFIG=Release TEST="--test"
+    - TOOLCHAIN=xcode CONFIG=Debug TEST="--test"
+    - TOOLCHAIN=xcode CONFIG=Release TEST="--test"
+    - TOOLCHAIN=gcc CONFIG=Debug TEST="--test"
+    - TOOLCHAIN=gcc CONFIG=Release TEST="--test"
+    - TOOLCHAIN=ios-nocodesign CONFIG=Debug EXTRA="--iossim"
+    - TOOLCHAIN=ios-nocodesign CONFIG=Release EXTRA="--iossim"
+        # Extra cmake modules needed for iOS testing:
+        # * https://github.com/ruslo/sugar/tree/master/cmake/core#sugar_add_ios_gtest
+    - TOOLCHAIN=analyze CONFIG=Debug TEST="--test"
+    - TOOLCHAIN=analyze CONFIG=Release TEST="--test"
+
 install:
     - brew install cmake
+    - brew install python3
+    # install cmake toolchains and script
+    - POLLY_VERSION="0.6.1"
+    - wget "https://github.com/ruslo/polly/archive/v${POLLY_VERSION}.tar.gz"
+    - tar xf "v${POLLY_VERSION}.tar.gz"
+    - export PATH="`pwd`/polly-${POLLY_VERSION}/bin:${PATH}"
+    # -- end
+    # install cmake
+    - CMAKE_VERSION="3.0.2-ios-universal"
+    - wget "https://github.com/ruslo/CMake/archive/v${CMAKE_VERSION}.tar.gz"
+    - openssl sha1 "v${CMAKE_VERSION}.tar.gz"
+    - tar xf "v${CMAKE_VERSION}.tar.gz"
+    - cd "CMake-${CMAKE_VERSION}"
+    - build.py --install --toolchain default --config Release --fwd "CMAKE_USE_SYSTEM_CURL=YES"
+    - export PATH="`pwd`/_install/default/bin:${PATH}"
+    - cd ..
+    # -- end
+    # verify installed cmake
+    - which cmake
+    - cmake --version
+    # -- end
 
 script:
-    - mkdir _builds
-    - cd _builds
     # download all
-    - cmake ..
+    - build.py --toolchain ${TOOLCHAIN} --config ${CONFIG} --verbose ${TEST} ${EXTRA}
     # if run generate again, no download needed
-    - cmake ..
+    - build.py --toolchain ${TOOLCHAIN} --config ${CONFIG} --verbose ${TEST} ${EXTRA}
