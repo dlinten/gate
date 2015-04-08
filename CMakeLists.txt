@@ -17,8 +17,8 @@ include("cmake/HunterGate.cmake")
 # 4. include master file: 'include(${HUNTER_SELF}/cmake/Hunter)
 # 5. include `hunter_add_package` module
 HunterGate(
-    URL "https://github.com/ruslo/hunter/archive/v0.5.12.tar.gz"
-    SHA1 "a807daa0f6439db605744fb736d32757a07c9407"
+    URL "https://github.com/ruslo/hunter/archive/v0.7.0.tar.gz"
+    SHA1 "e730118c7ec65126398f8d4f09daf9366791ede0"
 )
 
 # now hunter can be used, like
