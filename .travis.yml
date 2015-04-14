@@ -47,6 +47,6 @@ install:
 
 script:
     # download all
-    - build.py --toolchain ${TOOLCHAIN} --config ${CONFIG} --verbose ${TEST} ${EXTRA} --fwd HUNTER_RUN_INSTALL=ON
-    # if run generate again, no download needed (clear since argument HUNTER_RUN_INSTALL missing)
-    - build.py --toolchain ${TOOLCHAIN} --config ${CONFIG} --verbose ${TEST} ${EXTRA} --clear
+    - build.py --toolchain ${TOOLCHAIN} --config ${CONFIG} --verbose ${TEST} ${EXTRA}
+    # if run generate again, no download needed
+    - build.py --toolchain ${TOOLCHAIN} --config ${CONFIG} --verbose ${TEST} ${EXTRA}
