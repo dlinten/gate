@@ -22,6 +22,9 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+# David Linten
+# Modification of the original from forked repo git@github.com:ruslo/hunter.git
+#
 # This is a gate file to Hunter package manager.
 # Include this file using `include` command and add package you need, example:
 #
@@ -40,7 +43,7 @@
 #
 # Projects:
 #     * https://github.com/hunter-packages/gate/
-#     * https://github.com/ruslo/hunter
+#     * https://github.com/dlinten/hunter
 
 cmake_minimum_required(VERSION 3.0) # Minimum for Hunter
 include(CMakeParseArguments) # cmake_parse_arguments
@@ -49,7 +52,7 @@ option(HUNTER_ENABLED "Enable Hunter package manager support" ON)
 option(HUNTER_STATUS_PRINT "Print working status" ON)
 option(HUNTER_STATUS_DEBUG "Print a lot info" OFF)
 
-set(HUNTER_WIKI "https://github.com/ruslo/hunter/wiki")
+set(HUNTER_WIKI "https://github.com/dlinten/hunter/wiki")
 
 function(hunter_gate_status_print)
   foreach(print_message ${ARGV})

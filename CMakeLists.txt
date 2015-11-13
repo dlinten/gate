@@ -15,7 +15,7 @@ include("cmake/HunterGate.cmake")
 # 3. set HUNTER_GATE_* variables
 # 4. include master file: 'include(${HUNTER_SELF}/cmake/Hunter)
 HunterGate(
-    URL "https://github.com/ruslo/hunter/archive/v0.8.1.tar.gz"
+    URL "https://github.com/dlinten/hunter/archive/v0.8.1.tar.gz"
     SHA1 "a9bd96ab113f3af870b13cd05cf4e75b8848cf4a"
 )
 
